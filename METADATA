@@ -1,187 +1,202 @@
 Metadata-Version: 2.4
-Name: cloudpickle
-Version: 3.1.2
-Summary: Pickler class to extend the standard pickle.Pickler functionality
-Home-page: https://github.com/cloudpipe/cloudpickle
-Author: The cloudpickle developer team
-Author-email: cloudpipe@googlegroups.com
-Requires-Python: >=3.8
-Description-Content-Type: text/markdown
-License: BSD-3-Clause
-Classifier: Development Status :: 5 - Production/Stable
+Name: h11
+Version: 0.16.0
+Summary: A pure-Python, bring-your-own-I/O implementation of HTTP/1.1
+Home-page: https://github.com/python-hyper/h11
+Author: Nathaniel J. Smith
+Author-email: njs@pobox.com
+License: MIT
+Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Developers
-Classifier: License :: OSI Approved :: BSD License
-Classifier: Operating System :: POSIX
-Classifier: Operating System :: Microsoft :: Windows
-Classifier: Operating System :: MacOS :: MacOS X
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: Implementation :: CPython
+Classifier: Programming Language :: Python :: Implementation :: PyPy
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
 Classifier: Programming Language :: Python :: 3.8
 Classifier: Programming Language :: Python :: 3.9
 Classifier: Programming Language :: Python :: 3.10
 Classifier: Programming Language :: Python :: 3.11
 Classifier: Programming Language :: Python :: 3.12
-Classifier: Programming Language :: Python :: 3.13
-Classifier: Programming Language :: Python :: 3.14
-Classifier: Programming Language :: Python :: Implementation :: CPython
-Classifier: Programming Language :: Python :: Implementation :: PyPy
-Classifier: Topic :: Software Development :: Libraries :: Python Modules
-Classifier: Topic :: Scientific/Engineering
-Classifier: Topic :: System :: Distributed Computing
-License-File: LICENSE
+Classifier: Topic :: Internet :: WWW/HTTP
+Classifier: Topic :: System :: Networking
+Requires-Python: >=3.8
+License-File: LICENSE.txt
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: home-page
+Dynamic: license
+Dynamic: license-file
+Dynamic: requires-python
+Dynamic: summary
 
-# cloudpickle
+h11
+===
 
-[![Automated Tests](https://github.com/cloudpipe/cloudpickle/workflows/Automated%20Tests/badge.svg?branch=master&event=push)](https://github.com/cloudpipe/cloudpickle/actions)
-[![codecov.io](https://codecov.io/github/cloudpipe/cloudpickle/coverage.svg?branch=master)](https://codecov.io/github/cloudpipe/cloudpickle?branch=master)
+.. image:: https://travis-ci.org/python-hyper/h11.svg?branch=master
+   :target: https://travis-ci.org/python-hyper/h11
+   :alt: Automated test status
 
-`cloudpickle` makes it possible to serialize Python constructs not supported
-by the default `pickle` module from the Python standard library.
+.. image:: https://codecov.io/gh/python-hyper/h11/branch/master/graph/badge.svg
+   :target: https://codecov.io/gh/python-hyper/h11
+   :alt: Test coverage
 
-`cloudpickle` is especially useful for **cluster computing** where Python
-code is shipped over the network to execute on remote hosts, possibly close
-to the data.
+.. image:: https://readthedocs.org/projects/h11/badge/?version=latest
+   :target: http://h11.readthedocs.io/en/latest/?badge=latest
+   :alt: Documentation Status
 
-Among other things, `cloudpickle` supports pickling for **lambda functions**
-along with **functions and classes defined interactively** in the
-`__main__` module (for instance in a script, a shell or a Jupyter notebook).
+This is a little HTTP/1.1 library written from scratch in Python,
+heavily inspired by `hyper-h2 <https://hyper-h2.readthedocs.io/>`_.
 
-Cloudpickle can only be used to send objects between the **exact same version
-of Python**.
+It's a "bring-your-own-I/O" library; h11 contains no IO code
+whatsoever. This means you can hook h11 up to your favorite network
+API, and that could be anything you want: synchronous, threaded,
+asynchronous, or your own implementation of `RFC 6214
+<https://tools.ietf.org/html/rfc6214>`_ -- h11 won't judge you.
+(Compare this to the current state of the art, where every time a `new
+network API <https://trio.readthedocs.io/>`_ comes along then someone
+gets to start over reimplementing the entire HTTP protocol from
+scratch.) Cory Benfield made an `excellent blog post describing the
+benefits of this approach
+<https://lukasa.co.uk/2015/10/The_New_Hyper/>`_, or if you like video
+then here's his `PyCon 2016 talk on the same theme
+<https://www.youtube.com/watch?v=7cC3_jGwl_U>`_.
 
-Using `cloudpickle` for **long-term object storage is not supported and
-strongly discouraged.**
+This also means that h11 is not immediately useful out of the box:
+it's a toolkit for building programs that speak HTTP, not something
+that could directly replace ``requests`` or ``twisted.web`` or
+whatever. But h11 makes it much easier to implement something like
+``requests`` or ``twisted.web``.
 
-**Security notice**: one should **only load pickle data from trusted sources** as
-otherwise `pickle.load` can lead to arbitrary code execution resulting in a critical
-security vulnerability.
+At a high level, working with h11 goes like this:
 
+1) First, create an ``h11.Connection`` object to track the state of a
+   single HTTP/1.1 connection.
 
-Installation
-------------
+2) When you read data off the network, pass it to
+   ``conn.receive_data(...)``; you'll get back a list of objects
+   representing high-level HTTP "events".
 
-The latest release of `cloudpickle` is available from
-[pypi](https://pypi.python.org/pypi/cloudpickle):
+3) When you want to send a high-level HTTP event, create the
+   corresponding "event" object and pass it to ``conn.send(...)``;
+   this will give you back some bytes that you can then push out
+   through the network.
 
-    pip install cloudpickle
+For example, a client might instantiate and then send a
+``h11.Request`` object, then zero or more ``h11.Data`` objects for the
+request body (e.g., if this is a POST), and then a
+``h11.EndOfMessage`` to indicate the end of the message. Then the
+server would then send back a ``h11.Response``, some ``h11.Data``, and
+its own ``h11.EndOfMessage``. If either side violates the protocol,
+you'll get a ``h11.ProtocolError`` exception.
 
+h11 is suitable for implementing both servers and clients, and has a
+pleasantly symmetric API: the events you send as a client are exactly
+the ones that you receive as a server and vice-versa.
 
-Examples
---------
+`Here's an example of a tiny HTTP client
+<https://github.com/python-hyper/h11/blob/master/examples/basic-client.py>`_
 
-Pickling a lambda expression:
+It also has `a fine manual <https://h11.readthedocs.io/>`_.
 
-```python
->>> import cloudpickle
->>> squared = lambda x: x ** 2
->>> pickled_lambda = cloudpickle.dumps(squared)
+FAQ
+---
 
->>> import pickle
->>> new_squared = pickle.loads(pickled_lambda)
->>> new_squared(2)
-4
-```
+*Whyyyyy?*
 
-Pickling a function interactively defined in a Python shell session
-(in the `__main__` module):
+I wanted to play with HTTP in `Curio
+<https://curio.readthedocs.io/en/latest/tutorial.html>`__ and `Trio
+<https://trio.readthedocs.io>`__, which at the time didn't have any
+HTTP libraries. So I thought, no big deal, Python has, like, a dozen
+different implementations of HTTP, surely I can find one that's
+reusable. I didn't find one, but I did find Cory's call-to-arms
+blog-post. So I figured, well, fine, if I have to implement HTTP from
+scratch, at least I can make sure no-one *else* has to ever again.
 
-```python
->>> CONSTANT = 42
->>> def my_function(data: int) -> int:
-...     return data + CONSTANT
-...
->>> pickled_function = cloudpickle.dumps(my_function)
->>> depickled_function = pickle.loads(pickled_function)
->>> depickled_function
-<function __main__.my_function(data:int) -> int>
->>> depickled_function(43)
-85
-```
+*Should I use it?*
 
+Maybe. You should be aware that it's a very young project. But, it's
+feature complete and has an exhaustive test-suite and complete docs,
+so the next step is for people to try using it and see how it goes
+:-). If you do then please let us know -- if nothing else we'll want
+to talk to you before making any incompatible changes!
 
-Overriding pickle's serialization mechanism for importable constructs:
-----------------------------------------------------------------------
+*What are the features/limitations?*
 
-An important difference between `cloudpickle` and `pickle` is that
-`cloudpickle` can serialize a function or class **by value**, whereas `pickle`
-can only serialize it **by reference**. Serialization by reference treats
-functions and classes as attributes of modules, and pickles them through
-instructions that trigger the import of their module at load time.
-Serialization by reference is thus limited in that it assumes that the module
-containing the function or class is available/importable in the unpickling
-environment. This assumption breaks when pickling constructs defined in an
-interactive session, a case that is automatically detected by `cloudpickle`,
-that pickles such constructs **by value**.
+Roughly speaking, it's trying to be a robust, complete, and non-hacky
+implementation of the first "chapter" of the HTTP/1.1 spec: `RFC 7230:
+HTTP/1.1 Message Syntax and Routing
+<https://tools.ietf.org/html/rfc7230>`_. That is, it mostly focuses on
+implementing HTTP at the level of taking bytes on and off the wire,
+and the headers related to that, and tries to be anal about spec
+conformance. It doesn't know about higher-level concerns like URL
+routing, conditional GETs, cross-origin cookie policies, or content
+negotiation. But it does know how to take care of framing,
+cross-version differences in keep-alive handling, and the "obsolete
+line folding" rule, so you can focus your energies on the hard /
+interesting parts for your application, and it tries to support the
+full specification in the sense that any useful HTTP/1.1 conformant
+application should be able to use h11.
 
-Another case where the importability assumption is expected to break is when
-developing a module in a distributed execution environment: the worker
-processes may not have access to the said module, for example if they live on a
-different machine than the process in which the module is being developed. By
-itself, `cloudpickle` cannot detect such "locally importable" modules and
-switch to serialization by value; instead, it relies on its default mode, which
-is serialization by reference. However, since `cloudpickle 2.0.0`, one can
-explicitly specify modules for which serialization by value should be used,
-using the
-`register_pickle_by_value(module)`/`/unregister_pickle_by_value(module)` API:
+It's pure Python, and has no dependencies outside of the standard
+library.
 
-```python
->>> import cloudpickle
->>> import my_module
->>> cloudpickle.register_pickle_by_value(my_module)
->>> cloudpickle.dumps(my_module.my_function)  # my_function is pickled by value
->>> cloudpickle.unregister_pickle_by_value(my_module)
->>> cloudpickle.dumps(my_module.my_function)  # my_function is pickled by reference
-```
+It has a test suite with 100.0% coverage for both statements and
+branches.
 
-Using this API, there is no need to re-install the new version of the module on
-all the worker nodes nor to restart the workers: restarting the client Python
-process with the new source code is enough.
+Currently it supports Python 3 (testing on 3.8-3.12) and PyPy 3.
+The last Python 2-compatible version was h11 0.11.x.
+(Originally it had a Cython wrapper for `http-parser
+<https://github.com/nodejs/http-parser>`_ and a beautiful nested state
+machine implemented with ``yield from`` to postprocess the output. But
+I had to take these out -- the new *parser* needs fewer lines-of-code
+than the old *parser wrapper*, is written in pure Python, uses no
+exotic language syntax, and has more features. It's sad, really; that
+old state machine was really slick. I just need a few sentences here
+to mourn that.)
 
-Note that this feature is still **experimental**, and may fail in the following
-situations:
+I don't know how fast it is. I haven't benchmarked or profiled it yet,
+so it's probably got a few pointless hot spots, and I've been trying
+to err on the side of simplicity and robustness instead of
+micro-optimization. But at the architectural level I tried hard to
+avoid fundamentally bad decisions, e.g., I believe that all the
+parsing algorithms remain linear-time even in the face of pathological
+input like slowloris, and there are no byte-by-byte loops. (I also
+believe that it maintains bounded memory usage in the face of
+arbitrary/pathological input.)
 
-- If the body of a function/class pickled by value contains an `import` statement:
-  ```python
-  >>> def f():
-  >>> ... from another_module import g
-  >>> ... # calling f in the unpickling environment may fail if another_module
-  >>> ... # is unavailable
-  >>> ... return g() + 1
-  ```
+The whole library is ~800 lines-of-code. You can read and understand
+the whole thing in less than an hour. Most of the energy invested in
+this so far has been spent on trying to keep things simple by
+minimizing special-cases and ad hoc state manipulation; even though it
+is now quite small and simple, I'm still annoyed that I haven't
+figured out how to make it even smaller and simpler. (Unfortunately,
+HTTP does not lend itself to simplicity.)
 
-- If a function pickled by reference uses a function pickled by value during its execution.
+The API is ~feature complete and I don't expect the general outlines
+to change much, but you can't judge an API's ergonomics until you
+actually document and use it, so I'd expect some changes in the
+details.
 
+*How do I try it?*
 
-Running the tests
------------------
+.. code-block:: sh
 
-- With `tox`, to test run the tests for all the supported versions of
-  Python and PyPy:
+  $ pip install h11
+  $ git clone git@github.com:python-hyper/h11
+  $ cd h11/examples
+  $ python basic-client.py
 
-      pip install tox
-      tox
+and go from there.
 
-  or alternatively for a specific environment:
+*License?*
 
-      tox -e py312
+MIT
 
+*Code of conduct?*
 
-- With `pytest` to only run the tests for your current version of
-  Python:
-
-      pip install -r dev-requirements.txt
-      PYTHONPATH='.:tests' pytest
-
-History
--------
-
-`cloudpickle` was initially developed by [picloud.com](http://web.archive.org/web/20140721022102/http://blog.picloud.com/2013/11/17/picloud-has-joined-dropbox/) and shipped as part of
-the client SDK.
-
-A copy of `cloudpickle.py` was included as part of PySpark, the Python
-interface to [Apache Spark](https://spark.apache.org/). Davies Liu, Josh
-Rosen, Thom Neale and other Apache Spark developers improved it significantly,
-most notably to add support for PyPy and Python 3.
-
-The aim of the `cloudpickle` project is to make that work available to a wider
-audience outside of the Spark ecosystem and to make it easier to improve it
-further notably with the help of a dedicated non-regression test suite.
-
+Contributors are requested to follow our `code of conduct
+<https://github.com/python-hyper/h11/blob/master/CODE_OF_CONDUCT.md>`_ in
+all project spaces.

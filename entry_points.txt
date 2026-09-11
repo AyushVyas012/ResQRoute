@@ -1,2 +1,5 @@
 [console_scripts]
-normalizer = charset_normalizer.cli:cli_detect
+fastapi = fastapi.cli:main
+
+[gui_scripts]
+

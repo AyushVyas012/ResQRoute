@@ -1,8 +1,1 @@
-"""
-Expose version
-"""
-
-from __future__ import annotations
-
-__version__ = "3.5.1"
-VERSION = __version__.split(".")
+__version__ = "1.2.3"
