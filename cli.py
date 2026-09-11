@@ -1,247 +1,132 @@
-import json
-import os
-import shlex
+"""Command-line interface for the :mod:`idna` package.
+
+Invoked via ``python -m idna``. See :func:`main` for the entry point.
+"""
+
+from __future__ import annotations
+
+import argparse
 import sys
-from contextlib import contextmanager
-from typing import IO, Any, Dict, Iterator, List, Optional
+from itertools import chain
+from typing import IO, TYPE_CHECKING
 
-if sys.platform == "win32":
-    from subprocess import Popen
+from . import IDNAError, decode, encode, unicode_version
+from .core import _alabel_prefix, _unicode_dots_re
+from .package_data import __version__
 
-try:
-    import click
-except ImportError:
-    sys.stderr.write(
-        "It seems python-dotenv is not installed with cli option. \n"
-        'Run pip install "python-dotenv[cli]" to fix this.'
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+
+def _looks_like_alabel(s: str) -> bool:
+    """Return True if any label in ``s`` carries the ``xn--`` ACE prefix."""
+    prefix = _alabel_prefix.decode("ascii")
+    return any(label.lower().startswith(prefix) for label in _unicode_dots_re.split(s))
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m idna",
+        description=(
+            "Convert a domain name between its Unicode (U-label) and "
+            "ASCII-compatible (A-label) forms. With no mode flag, the "
+            "direction is chosen from the first input — if it contains "
+            "an xn-- label the stream is decoded, otherwise it is "
+            "encoded — and the same mode is applied to every remaining "
+            "input. UTS #46 mapping is applied by default; pass "
+            "--strict to disable it. When no domains are given on the "
+            "command line and stdin is piped, one domain per line is "
+            "read from stdin."
+        ),
     )
-    sys.exit(1)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "-e",
+        "--encode",
+        dest="mode",
+        action="store_const",
+        const="encode",
+        help="Encode the input to its ASCII A-label form.",
+    )
+    mode.add_argument(
+        "-d",
+        "--decode",
+        dest="mode",
+        action="store_const",
+        const="decode",
+        help="Decode the input from its ASCII A-label form.",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Disable the default UTS #46 mapping and apply IDNA 2008 rules verbatim.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"idna {__version__} (Unicode {unicode_version})",
+    )
+    parser.add_argument(
+        "domain",
+        nargs="*",
+        help="One or more domain names to convert. Omit to read from stdin.",
+    )
+    return parser
 
-from .main import dotenv_values, set_key, unset_key
-from .version import __version__
+
+def _iter_stdin(stream: IO[str]) -> Iterable[str]:
+    """Yield non-empty stripped lines from ``stream``, ignoring blanks."""
+    for line in stream:
+        stripped = line.strip()
+        if stripped:
+            yield stripped
 
 
-def enumerate_env() -> Optional[str]:
-    """
-    Return a path for the ${pwd}/.env file.
-
-    If pwd does not exist, return None.
-    """
+def _convert_one(domain: str, mode: str, uts46: bool) -> bool:
+    """Convert ``domain`` and write the result; return ``False`` on failure."""
     try:
-        cwd = os.getcwd()
-    except FileNotFoundError:
-        return None
-    path = os.path.join(cwd, ".env")
-    return path
+        if mode == "decode":
+            print(decode(domain, uts46=uts46))
+        else:
+            print(encode(domain, uts46=uts46).decode("ascii"))
+    except IDNAError as err:
+        print(f"idna: {mode} failed for {domain!r}: {err}", file=sys.stderr)
+        return False
+    return True
 
 
-@click.group()
-@click.option(
-    "-f",
-    "--file",
-    default=enumerate_env(),
-    type=click.Path(file_okay=True),
-    help="Location of the .env file, defaults to .env file in current working directory.",
-)
-@click.option(
-    "-q",
-    "--quote",
-    default="always",
-    type=click.Choice(["always", "never", "auto"]),
-    help="Whether to quote or not the variable values. Default mode is always. This does not affect parsing.",
-)
-@click.option(
-    "-e",
-    "--export",
-    default=False,
-    type=click.BOOL,
-    help="Whether to write the dot file as an executable bash script.",
-)
-@click.version_option(version=__version__)
-@click.pass_context
-def cli(ctx: click.Context, file: Any, quote: Any, export: Any) -> None:
-    """This script is used to set, get or unset values from a .env file."""
-    ctx.obj = {"QUOTE": quote, "EXPORT": export, "FILE": file}
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for ``python -m idna``.
 
+    When more than one domain is supplied (via positional arguments or
+    piped stdin) and no mode flag is given, the first input determines
+    the direction and that mode is applied uniformly to the rest.
 
-@contextmanager
-def stream_file(path: os.PathLike) -> Iterator[IO[str]]:
+    :param argv: Argument list excluding the program name. Defaults to
+        :data:`sys.argv` when ``None``.
+    :returns: ``0`` on success, ``1`` if any conversion fails.
     """
-    Open a file and yield the corresponding (decoded) stream.
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    uts46 = not args.strict
 
-    Exits with error code 2 if the file cannot be opened.
-    """
-
-    try:
-        with open(path) as stream:
-            yield stream
-    except OSError as exc:
-        print(f"Error opening env file: {exc}", file=sys.stderr)
-        sys.exit(2)
-
-
-@cli.command(name="list")
-@click.pass_context
-@click.option(
-    "--format",
-    "output_format",
-    default="simple",
-    type=click.Choice(["simple", "json", "shell", "export"]),
-    help="The format in which to display the list. Default format is simple, "
-    "which displays name=value without quotes.",
-)
-def list_values(ctx: click.Context, output_format: str) -> None:
-    """Display all the stored key/value."""
-    file = ctx.obj["FILE"]
-
-    with stream_file(file) as stream:
-        values = dotenv_values(stream=stream)
-
-    if output_format == "json":
-        click.echo(json.dumps(values, indent=2, sort_keys=True))
+    if args.domain:
+        domains: Iterable[str] = args.domain
+    elif not sys.stdin.isatty():
+        domains = _iter_stdin(sys.stdin)
     else:
-        prefix = "export " if output_format == "export" else ""
-        for k in sorted(values):
-            v = values[k]
-            if v is not None:
-                if output_format in ("export", "shell"):
-                    v = shlex.quote(v)
-                click.echo(f"{prefix}{k}={v}")
+        parser.error("a domain argument is required when stdin is a terminal")
+
+    iterator = iter(domains)
+    first = next(iterator, None)
+    if first is None:
+        return 0
+
+    mode = args.mode or ("decode" if _looks_like_alabel(first) else "encode")
+
+    results = [_convert_one(domain, mode, uts46) for domain in chain([first], iterator)]
+    return 0 if all(results) else 1
 
 
-@cli.command(name="set")
-@click.pass_context
-@click.argument("key", required=True)
-@click.argument("value", required=True)
-def set_value(ctx: click.Context, key: Any, value: Any) -> None:
-    """
-    Store the given key/value.
-
-    This doesn't follow symlinks, to avoid accidentally modifying a file at a
-    potentially untrusted path.
-    """
-
-    file = ctx.obj["FILE"]
-    quote = ctx.obj["QUOTE"]
-    export = ctx.obj["EXPORT"]
-    success, key, value = set_key(file, key, value, quote, export)
-    if success:
-        click.echo(f"{key}={value}")
-    else:
-        sys.exit(1)
-
-
-@cli.command()
-@click.pass_context
-@click.argument("key", required=True)
-def get(ctx: click.Context, key: Any) -> None:
-    """Retrieve the value for the given key."""
-    file = ctx.obj["FILE"]
-
-    with stream_file(file) as stream:
-        values = dotenv_values(stream=stream)
-
-    stored_value = values.get(key)
-    if stored_value:
-        click.echo(stored_value)
-    else:
-        sys.exit(1)
-
-
-@cli.command()
-@click.pass_context
-@click.argument("key", required=True)
-def unset(ctx: click.Context, key: Any) -> None:
-    """
-    Removes the given key.
-
-    This doesn't follow symlinks, to avoid accidentally modifying a file at a
-    potentially untrusted path.
-    """
-    file = ctx.obj["FILE"]
-    quote = ctx.obj["QUOTE"]
-    success, key = unset_key(file, key, quote)
-    if success:
-        click.echo(f"Successfully removed {key}")
-    else:
-        sys.exit(1)
-
-
-@cli.command(
-    context_settings={
-        "allow_extra_args": True,
-        "allow_interspersed_args": False,
-        "ignore_unknown_options": True,
-    }
-)
-@click.pass_context
-@click.option(
-    "--override/--no-override",
-    default=True,
-    help="Override variables from the environment file with those from the .env file.",
-)
-@click.argument("commandline", nargs=-1, type=click.UNPROCESSED)
-def run(ctx: click.Context, override: bool, commandline: tuple[str, ...]) -> None:
-    """Run command with environment variables present."""
-    file = ctx.obj["FILE"]
-    if not os.path.isfile(file):
-        raise click.BadParameter(
-            f"Invalid value for '-f' \"{file}\" does not exist.", ctx=ctx
-        )
-    dotenv_as_dict = {
-        k: v
-        for (k, v) in dotenv_values(file).items()
-        if v is not None and (override or k not in os.environ)
-    }
-
-    if not commandline:
-        click.echo("No command given.")
-        sys.exit(1)
-
-    run_command([*commandline, *ctx.args], dotenv_as_dict)
-
-
-def run_command(command: List[str], env: Dict[str, str]) -> None:
-    """Replace the current process with the specified command.
-
-    Replaces the current process with the specified command and the variables from `env`
-    added in the current environment variables.
-
-    Parameters
-    ----------
-    command: List[str]
-        The command and it's parameters
-    env: Dict
-        The additional environment variables
-
-    Returns
-    -------
-    None
-        This function does not return any value. It replaces the current process with the new one.
-
-    """
-    # copy the current environment variables and add the vales from
-    # `env`
-    cmd_env = os.environ.copy()
-    cmd_env.update(env)
-
-    if sys.platform == "win32":
-        # execvpe on Windows returns control immediately
-        # rather than once the command has finished.
-        try:
-            p = Popen(
-                command, universal_newlines=True, bufsize=0, shell=False, env=cmd_env
-            )
-        except FileNotFoundError:
-            print(f"Command not found: {command[0]}", file=sys.stderr)
-            sys.exit(1)
-
-        _, _ = p.communicate()
-
-        sys.exit(p.returncode)
-    else:
-        try:
-            os.execvpe(command[0], args=command, env=cmd_env)
-        except FileNotFoundError:
-            print(f"Command not found: {command[0]}", file=sys.stderr)
-            sys.exit(1)
+if __name__ == "__main__":
+    sys.exit(main())

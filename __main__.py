@@ -1,6 +1,6 @@
-"""Entry point for cli, enables execution with `python -m dotenv`"""
+import sys
 
-from .cli import cli
+from .cli import main
 
 if __name__ == "__main__":
-    cli()
+    sys.exit(main())
