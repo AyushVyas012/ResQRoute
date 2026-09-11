@@ -1,144 +1,51 @@
-"""
-Click is a simple Python module inspired by the stdlib optparse to make
-writing command line scripts fun. Unlike other modules, it's based
-around a simple API that does not come with too much magic and is
-composable.
-"""
+from typing import Any, Optional
 
-from __future__ import annotations
-
-from .core import Argument as Argument
-from .core import Command as Command
-from .core import CommandCollection as CommandCollection
-from .core import Context as Context
-from .core import Group as Group
-from .core import Option as Option
-from .core import Parameter as Parameter
-from .core import ParameterSource as ParameterSource
-from .decorators import argument as argument
-from .decorators import command as command
-from .decorators import confirmation_option as confirmation_option
-from .decorators import custom_version_option as custom_version_option
-from .decorators import group as group
-from .decorators import help_option as help_option
-from .decorators import make_pass_decorator as make_pass_decorator
-from .decorators import option as option
-from .decorators import pass_context as pass_context
-from .decorators import pass_obj as pass_obj
-from .decorators import password_option as password_option
-from .decorators import version_option as version_option
-from .exceptions import Abort as Abort
-from .exceptions import BadArgumentUsage as BadArgumentUsage
-from .exceptions import BadOptionUsage as BadOptionUsage
-from .exceptions import BadParameter as BadParameter
-from .exceptions import ClickException as ClickException
-from .exceptions import FileError as FileError
-from .exceptions import MissingParameter as MissingParameter
-from .exceptions import NoSuchCommand as NoSuchCommand
-from .exceptions import NoSuchOption as NoSuchOption
-from .exceptions import UsageError as UsageError
-from .formatting import HelpFormatter as HelpFormatter
-from .formatting import wrap_text as wrap_text
-from .globals import get_current_context as get_current_context
-from .termui import clear as clear
-from .termui import confirm as confirm
-from .termui import echo_via_pager as echo_via_pager
-from .termui import edit as edit
-from .termui import get_pager_file as get_pager_file
-from .termui import getchar as getchar
-from .termui import launch as launch
-from .termui import pause as pause
-from .termui import progressbar as progressbar
-from .termui import prompt as prompt
-from .termui import secho as secho
-from .termui import style as style
-from .termui import unstyle as unstyle
-from .types import BOOL as BOOL
-from .types import Choice as Choice
-from .types import DateTime as DateTime
-from .types import File as File
-from .types import FLOAT as FLOAT
-from .types import FloatRange as FloatRange
-from .types import INT as INT
-from .types import IntRange as IntRange
-from .types import ParamType as ParamType
-from .types import Path as Path
-from .types import STRING as STRING
-from .types import Tuple as Tuple
-from .types import UNPROCESSED as UNPROCESSED
-from .types import UUID as UUID
-from .utils import echo as echo
-from .utils import format_filename as format_filename
-from .utils import get_app_dir as get_app_dir
-from .utils import open_file as open_file
+from .main import dotenv_values, find_dotenv, get_key, load_dotenv, set_key, unset_key
 
 
-def __getattr__(name: str) -> object:
-    import warnings
+def load_ipython_extension(ipython: Any) -> None:
+    from .ipython import load_ipython_extension
 
-    if name == "BaseCommand":
-        from .core import _BaseCommand
+    load_ipython_extension(ipython)
 
-        warnings.warn(
-            "'BaseCommand' is deprecated and will be removed in Click 9.0. Use"
-            " 'Command' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _BaseCommand
 
-    if name == "MultiCommand":
-        from .core import _MultiCommand
+def get_cli_string(
+    path: Optional[str] = None,
+    action: Optional[str] = None,
+    key: Optional[str] = None,
+    value: Optional[str] = None,
+    quote: Optional[str] = None,
+):
+    """Returns a string suitable for running as a shell script.
 
-        warnings.warn(
-            "'MultiCommand' is deprecated and will be removed in Click 9.0. Use"
-            " 'Group' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _MultiCommand
+    Useful for converting a arguments passed to a fabric task
+    to be passed to a `local` or `run` command.
+    """
+    command = ["dotenv"]
+    if quote:
+        command.append(f"-q {quote}")
+    if path:
+        command.append(f"-f {path}")
+    if action:
+        command.append(action)
+        if key:
+            command.append(key)
+            if value:
+                if " " in value:
+                    command.append(f'"{value}"')
+                else:
+                    command.append(value)
 
-    if name == "OptionParser":
-        from .parser import _OptionParser
+    return " ".join(command).strip()
 
-        warnings.warn(
-            "'OptionParser' is deprecated and will be removed in Click 9.0. The"
-            " old parser is available in 'optparse'.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _OptionParser
 
-    if name == "__version__":
-        import importlib.metadata
-
-        warnings.warn(
-            "The '__version__' attribute is deprecated and will be removed in"
-            " Click 9.1. Use feature detection or"
-            " 'importlib.metadata.version(\"click\")' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return importlib.metadata.version("click")
-
-    if name == "get_binary_stream":
-        from .utils import _get_binary_stream
-
-        warnings.warn(
-            "'get_binary_stream' is deprecated and will be removed in Click 9.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _get_binary_stream
-
-    if name == "get_text_stream":
-        from .utils import _get_text_stream
-
-        warnings.warn(
-            "'get_text_stream' is deprecated and will be removed in Click 9.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _get_text_stream
-
-    raise AttributeError(name)
+__all__ = [
+    "get_cli_string",
+    "load_dotenv",
+    "dotenv_values",
+    "get_key",
+    "set_key",
+    "unset_key",
+    "find_dotenv",
+    "load_ipython_extension",
+]
